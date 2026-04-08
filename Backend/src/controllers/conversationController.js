@@ -1,7 +1,7 @@
-import asyncHandler from '../utils/asyncHandler.js';
-import Conversation from '../models/conversationModel.js';
-import Message from '../models/messageModel.js';
-import Item from '../models/itemModel.js';
+import asyncHandler from "../utils/asyncHandler.js";
+import Conversation from "../models/conversationModel.js";
+import Message from "../models/messageModel.js";
+import Item from "../models/itemModel.js";
 
 // ─────────────────────────────────────────────
 // @desc    Start or get a conversation between founder and owner
@@ -10,12 +10,12 @@ import Item from '../models/itemModel.js';
 // ─────────────────────────────────────────────
 export const startConversation = asyncHandler(async (req, res) => {
   const { itemId } = req.body;
-  const proofImage = req.file ? req.file.path : ''; 
-  
+  const proofImage = req.file ? req.file.path : "";
+
   const item = await Item.findById(itemId);
   if (!item) {
     res.status(404);
-    throw new Error('Item not found');
+    throw new Error("Item not found");
   }
 
   // Check if conversation already exists
@@ -25,12 +25,6 @@ export const startConversation = asyncHandler(async (req, res) => {
   });
 
   if (!conversation) {
-    // Ensure the founder isn't the owner
-    if (item.userId.toString() === req.user._id.toString()) {
-       res.status(400);
-       throw new Error('Owners cannot start conversations on their own items as founders');
-    }
-
     conversation = await Conversation.create({
       itemId,
       ownerId: item.userId,
@@ -45,16 +39,17 @@ export const startConversation = asyncHandler(async (req, res) => {
 
   // Populate before sending back to frontend
   conversation = await Conversation.findById(conversation._id)
-    .populate('itemId', 'name image description status')
-    .populate('ownerId', 'name email')
-    .populate('founderId', 'name email');
+    .populate("itemId", "name image description status")
+    .populate("ownerId", "name email")
+    .populate("founderId", "name email");
 
   // Notify the owner that someone has found their item
-  const io = req.app.get('socketio');
+  const io = req.app.get("socketio");
   if (io) {
-    io.to(conversation.ownerId._id.toString()).emit('new_notification', {
-      type: 'DISCOVERY_REPORT',
+    io.to(conversation.ownerId._id.toString()).emit("new_notification", {
+      type: "DISCOVERY_REPORT",
       conversationId: conversation._id,
+      itemId: item._id,
       founderName: req.user.name,
       itemName: item.name,
       message: `Someone has reportedly found your ${item.name}! Check the proof and start chatting.`,
@@ -75,20 +70,17 @@ export const startConversation = asyncHandler(async (req, res) => {
 export const getMyConversations = asyncHandler(async (req, res) => {
   // Relationship-based query: Show chats where user is either the owner or the founder
   const query = {
-    $or: [{ ownerId: req.user._id }, { founderId: req.user._id }]
+    $or: [{ ownerId: req.user._id }, { founderId: req.user._id }],
   };
 
-  // Allow filtering by specific item (useful for Owner POV on ItemDetails page)
   if (req.query.itemId) {
-    // Note: When filtering by itemId on the public details page, we usually want 
-    // to search for others contacting us (ownerId) OR us contacting the owner (founderId).
-    // The previous strict 'const query = ...' logic was too restrictive.
+    query.itemId = req.query.itemId;
   }
 
   const conversations = await Conversation.find(query)
-    .populate('itemId', 'name image')
-    .populate('ownerId', 'name')
-    .populate('founderId', 'name')
+    .populate("itemId", "name image")
+    .populate("ownerId", "name")
+    .populate("founderId", "name")
     .sort({ updatedAt: -1 });
 
   res.status(200).json({
@@ -104,10 +96,10 @@ export const getMyConversations = asyncHandler(async (req, res) => {
 // ─────────────────────────────────────────────
 export const getConversationMessages = asyncHandler(async (req, res) => {
   const conversation = await Conversation.findById(req.params.id);
-  
+
   if (!conversation) {
     res.status(404);
-    throw new Error('Conversation not found');
+    throw new Error("Conversation not found");
   }
 
   // Ensure user is part of the conversation
@@ -116,10 +108,12 @@ export const getConversationMessages = asyncHandler(async (req, res) => {
     conversation.founderId.toString() !== req.user._id.toString()
   ) {
     res.status(403);
-    throw new Error('Not authorized to view these messages');
+    throw new Error("Not authorized to view these messages");
   }
 
-  const messages = await Message.find({ conversationId: req.params.id }).sort({ createdAt: 1 });
+  const messages = await Message.find({ conversationId: req.params.id }).sort({
+    createdAt: 1,
+  });
 
   res.status(200).json({
     success: true,

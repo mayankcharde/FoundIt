@@ -14,19 +14,25 @@ import { notFound, errorHandler } from "./middleware/errorMiddleware.js";
 
 const app = express();
 
+const normalizeOrigin = (origin) => String(origin || "").replace(/\/+$/, "");
+
 const allowedOrigins = [
+  "https://regal-cendol-2be6f2.netlify.app/",
   "http://localhost:5173",
-  "https://regal-cendol-2be6f2.netlify.app",
   "http://localhost:3000",
   process.env.FRONTEND_URL,
   process.env.NETLIFY_URL,
-].filter(Boolean);
+]
+  .filter(Boolean)
+  .map(normalizeOrigin);
 
 const corsOptions = {
   origin(origin, callback) {
     // Allow non-browser requests (like Postman/curl) and same-origin calls.
     if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin)) return callback(null, true);
+    if (allowedOrigins.includes(normalizeOrigin(origin))) {
+      return callback(null, true);
+    }
     return callback(new Error("CORS blocked for this origin"));
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],

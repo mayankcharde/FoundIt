@@ -4,6 +4,7 @@ import api from "../services/api";
 import Navbar from "../components/Navbar";
 import Chat from "../components/Chat";
 import { useAuth } from "../context/AuthContext";
+import { useSocket } from "../context/SocketContext";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Package,
@@ -16,22 +17,52 @@ import {
   Eye,
   ArrowRight,
   ShieldAlert,
+  RefreshCw,
+  Repeat,
 } from "lucide-react";
 
 const ItemDetails = () => {
   const { id } = useParams();
   const { user } = useAuth();
+  const { notifications } = useSocket();
   const navigate = useNavigate();
   const [item, setItem] = useState(null);
   const [loading, setLoading] = useState(true);
   const [conversation, setConversation] = useState(null);
   const [activeConversations, setActiveConversations] = useState([]); // For Owner POV
+  const [ownerConvLoading, setOwnerConvLoading] = useState(false);
+  const [forceFinderView, setForceFinderView] = useState(true);
   const [error, setError] = useState("");
   const [msgLoading, setMsgLoading] = useState(false);
 
   // Founder Proof State
   const [proofFile, setProofFile] = useState(null);
   const [proofPreview, setProofPreview] = useState(null);
+
+  const isSameId = (a, b) => String(a) === String(b);
+
+  const fetchOwnerConversations = async (itemId, options = {}) => {
+    const { silent = false } = options;
+    if (!silent) setOwnerConvLoading(true);
+
+    try {
+      const convRes = await api.get(`/conversations?itemId=${itemId}`);
+      const filtered = convRes.data.data.filter((c) =>
+        isSameId(c.itemId?._id || c.itemId, itemId),
+      );
+
+      setActiveConversations(filtered);
+
+      // Keep selected chat in sync with fresh server data.
+      setConversation((prev) => {
+        if (!filtered.length) return null;
+        if (!prev) return filtered[0];
+        return filtered.find((c) => isSameId(c._id, prev._id)) || filtered[0];
+      });
+    } finally {
+      if (!silent) setOwnerConvLoading(false);
+    }
+  };
 
   useEffect(() => {
     const fetchData = async () => {
@@ -40,20 +71,19 @@ const ItemDetails = () => {
         const itemData = itemRes.data.data;
         setItem(itemData);
 
-        const isItemOwner = user?._id === itemData.userId._id;
+        const isItemOwner = isSameId(user?._id, itemData.userId._id);
 
         if (isItemOwner) {
           // OWNER POV: Fetch all people who found this specific item
-          // Using query param ?itemId=id now handled by backend
-          const convRes = await api.get("/conversations");
-          const filtered = convRes.data.data.filter((c) => c.itemId._id === id);
-          setActiveConversations(filtered);
+          await fetchOwnerConversations(id);
         } else {
           // DISCOVERY POV: Check if I (the finder) already have a conversation
           if (user) {
             const convRes = await api.get("/conversations");
             const existing = convRes.data.data.find(
-              (c) => c.itemId._id === id && c.founderId._id === user._id,
+              (c) =>
+                isSameId(c.itemId?._id || c.itemId, id) &&
+                isSameId(c.founderId?._id || c.founderId, user._id),
             );
             if (existing) setConversation(existing);
           }
@@ -66,6 +96,32 @@ const ItemDetails = () => {
     };
     fetchData();
   }, [id, user]);
+
+  useEffect(() => {
+    if (!item || !user || !isSameId(user._id, item.userId?._id)) return;
+
+    const lastNotification = notifications[0];
+    if (!lastNotification || lastNotification.type !== "DISCOVERY_REPORT")
+      return;
+
+    const sameItemById =
+      lastNotification.itemId && isSameId(lastNotification.itemId, item._id);
+    const sameItemByName = lastNotification.itemName === item.name;
+
+    if (sameItemById || sameItemByName) {
+      fetchOwnerConversations(item._id).catch(() => {});
+    }
+  }, [notifications, item, user]);
+
+  useEffect(() => {
+    if (!item || !user || !isSameId(user._id, item.userId?._id)) return;
+
+    const intervalId = setInterval(() => {
+      fetchOwnerConversations(item._id, { silent: true }).catch(() => {});
+    }, 7000);
+
+    return () => clearInterval(intervalId);
+  }, [item, user]);
 
   const handleFileChange = (e) => {
     const file = e.target.files[0];
@@ -87,14 +143,6 @@ const ItemDetails = () => {
       ) {
         navigate("/founder-register");
       }
-      return;
-    }
-
-    // BLOCK SELF-CHAT: You cannot "find" your own item
-    if (item.userId._id === user._id) {
-      alert(
-        "ACTION BLOCKED: You are the owner of this item. You cannot start a discovery report for your own belonging.",
-      );
       return;
     }
 
@@ -148,7 +196,8 @@ const ItemDetails = () => {
       </div>
     );
 
-  const isItemOwner = user?._id === item.userId._id;
+  const isItemOwner = isSameId(user?._id, item.userId._id);
+  const showOwnerView = isItemOwner && !forceFinderView;
 
   return (
     <div className="page-shell">
@@ -158,7 +207,7 @@ const ItemDetails = () => {
       <div
         className={`py-3 px-4 text-center text-[10px] font-black uppercase tracking-[0.2em] shadow-sm ${isItemOwner ? "bg-slate-900 text-white" : "bg-cyan-700 text-white"}`}
       >
-        {isItemOwner ? (
+        {showOwnerView ? (
           <div className="flex items-center justify-center space-x-2">
             <Eye className="w-3 h-3" />{" "}
             <span>Owner Management Perspective Active</span>
@@ -249,7 +298,7 @@ const ItemDetails = () => {
           {/* Interaction Panel */}
           <section className="section-panel rounded-[3.5rem] p-8 md:p-10 border border-slate-700/70 relative overflow-hidden">
             <AnimatePresence mode="wait">
-              {isItemOwner ? (
+              {showOwnerView ? (
                 /* OWNER POV: Manage Chats */
                 <motion.div
                   key="owner"
@@ -266,6 +315,24 @@ const ItemDetails = () => {
                       Verify finding proof below before engaging in real-time
                       recovery communication.
                     </p>
+                    <div className="mt-4 flex flex-wrap items-center gap-3">
+                      <button
+                        onClick={() => fetchOwnerConversations(item._id)}
+                        className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-800 text-slate-200 hover:bg-slate-700 transition-colors text-xs font-bold uppercase tracking-wider"
+                      >
+                        <RefreshCw
+                          className={`w-3.5 h-3.5 ${ownerConvLoading ? "animate-spin" : ""}`}
+                        />
+                        Refresh Chats
+                      </button>
+                      <button
+                        onClick={() => setForceFinderView(true)}
+                        className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-cyan-700/70 text-cyan-100 hover:bg-cyan-600 transition-colors text-xs font-bold uppercase tracking-wider"
+                      >
+                        <Repeat className="w-3.5 h-3.5" />
+                        Preview Finder View
+                      </button>
+                    </div>
                   </div>
 
                   {activeConversations.length > 0 ? (
@@ -350,6 +417,19 @@ const ItemDetails = () => {
                   exit={{ opacity: 0 }}
                   className="space-y-10 relative z-10"
                 >
+                  {isItemOwner && forceFinderView && (
+                    <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-400/30 flex items-center justify-between gap-3">
+                      <p className="text-xs font-bold text-amber-200 uppercase tracking-wider">
+                        Finder preview mode enabled.
+                      </p>
+                      <button
+                        onClick={() => setForceFinderView(false)}
+                        className="px-3 py-2 rounded-lg bg-slate-800 text-slate-100 text-[10px] font-bold uppercase tracking-wider"
+                      >
+                        Back to Owner View
+                      </button>
+                    </div>
+                  )}
                   {!conversation ? (
                     <div className="space-y-10">
                       <div>
