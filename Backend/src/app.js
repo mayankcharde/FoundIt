@@ -15,7 +15,8 @@ import { notFound, errorHandler } from "./middleware/errorMiddleware.js";
 const app = express();
 
 const allowedOrigins = [
-  "https://regal-cendol-2be6f2.netlify.app/",
+  "http://localhost:5173",
+  "https://regal-cendol-2be6f2.netlify.app",
   "http://localhost:3000",
   process.env.FRONTEND_URL,
   process.env.NETLIFY_URL,
